@@ -1,5 +1,8 @@
 # Copyright 2017 Palantir Technologies, Inc.
+from distutils.version import LooseVersion
 import os
+import jedi
+import pytest
 
 from pyls import uris, lsp
 from pyls.workspace import Document
@@ -42,6 +45,8 @@ def test_rope_import_completion(config, workspace):
     assert items is None
 
 
+@pytest.mark.skipif(LooseVersion(jedi.__version__) < LooseVersion('0.14.0'),
+                    reason='This test fails with previous versions of jedi')
 def test_jedi_completion(config):
     # Over 'i' in os.path.isabs(...)
     com_position = {'line': 1, 'character': 15}
@@ -49,7 +54,7 @@ def test_jedi_completion(config):
     items = pyls_jedi_completions(config, doc, com_position)
 
     assert items
-    assert items[0]['label'] == 'isabs(s)'
+    assert items[0]['label'] == 'isabs(path)'
 
     # Test we don't throw with big character
     pyls_jedi_completions(config, doc, {'line': 1, 'character': 1000})
@@ -87,7 +92,7 @@ def test_jedi_property_completion(config):
     items = {c['label']: c['sortText'] for c in completions}
 
     # Ensure we can complete the 'world' property
-    assert 'world' in items
+    assert 'world' in list(items.keys())[0]
 
 
 def test_jedi_method_completion(config):
