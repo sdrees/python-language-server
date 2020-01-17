@@ -1,10 +1,16 @@
 # Copyright 2017 Palantir Technologies, Inc.
 import argparse
-import json
 import logging
 import logging.config
 import sys
-from .python_ls import start_io_lang_server, start_tcp_lang_server, PythonLanguageServer
+
+try:
+    import ujson as json
+except Exception:  # pylint: disable=broad-except
+    import json
+
+from .python_ls import (PythonLanguageServer, start_io_lang_server,
+                        start_tcp_lang_server)
 
 LOG_FORMAT = "%(asctime)s UTC - %(levelname)s - %(name)s - %(message)s"
 
@@ -55,10 +61,12 @@ def main():
     _configure_logger(args.verbose, args.log_config, args.log_file)
 
     if args.tcp:
-        start_tcp_lang_server(args.host, args.port, PythonLanguageServer)
+        start_tcp_lang_server(args.host, args.port, args.check_parent_process,
+                              PythonLanguageServer)
     else:
         stdin, stdout = _binary_stdio()
-        start_io_lang_server(stdin, stdout, args.check_parent_process, PythonLanguageServer)
+        start_io_lang_server(stdin, stdout, args.check_parent_process,
+                             PythonLanguageServer)
 
 
 def _binary_stdio():

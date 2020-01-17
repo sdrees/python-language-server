@@ -1,5 +1,7 @@
 # Copyright 2017 Palantir Technologies, Inc.
+from functools import partial
 import logging
+import os
 import socketserver
 import threading
 
@@ -32,24 +34,46 @@ class _StreamHandlerWrapper(socketserver.StreamRequestHandler, object):
         self.delegate = self.DELEGATE_CLASS(self.rfile, self.wfile)
 
     def handle(self):
-        self.delegate.start()
+        try:
+            self.delegate.start()
+        except OSError as e:
+            if os.name == 'nt':
+                # Catch and pass on ConnectionResetError when parent process
+                # dies
+                # pylint: disable=no-member, undefined-variable
+                if isinstance(e, WindowsError) and e.winerror == 10054:
+                    pass
+
+        # pylint: disable=no-member
+        self.SHUTDOWN_CALL()
 
 
-def start_tcp_lang_server(bind_addr, port, handler_class):
+def start_tcp_lang_server(bind_addr, port, check_parent_process, handler_class):
     if not issubclass(handler_class, PythonLanguageServer):
         raise ValueError('Handler class must be an instance of PythonLanguageServer')
+
+    def shutdown_server(*args):
+        # pylint: disable=unused-argument
+        log.debug('Shutting down server')
+        # Shutdown call must be done on a thread, to prevent deadlocks
+        stop_thread = threading.Thread(target=server.shutdown)
+        stop_thread.start()
 
     # Construct a custom wrapper class around the user's handler_class
     wrapper_class = type(
         handler_class.__name__ + 'Handler',
         (_StreamHandlerWrapper,),
-        {'DELEGATE_CLASS': handler_class}
+        {'DELEGATE_CLASS': partial(handler_class,
+                                   check_parent_process=check_parent_process),
+         'SHUTDOWN_CALL': shutdown_server}
     )
 
-    server = socketserver.TCPServer((bind_addr, port), wrapper_class)
+    server = socketserver.TCPServer((bind_addr, port), wrapper_class, bind_and_activate=False)
     server.allow_reuse_address = True
 
     try:
+        server.server_bind()
+        server.server_activate()
         log.info('Serving %s on (%s, %s)', handler_class.__name__, bind_addr, port)
         server.serve_forever()
     finally:
@@ -76,6 +100,7 @@ class PythonLanguageServer(MethodDispatcher):
         self.workspace = None
         self.config = None
         self.root_uri = None
+        self.watching_thread = None
         self.workspaces = {}
         self.uri_workspace_mapper = {}
 
@@ -150,6 +175,7 @@ class PythonLanguageServer(MethodDispatcher):
             'hoverProvider': True,
             'referencesProvider': True,
             'renameProvider': True,
+            'foldingRangeProvider': True,
             'signatureHelpProvider': {
                 'triggerCharacters': ['(', ',', '=']
             },
@@ -178,26 +204,25 @@ class PythonLanguageServer(MethodDispatcher):
 
         self.workspaces.pop(self.root_uri, None)
         self.root_uri = rootUri
-        self.workspace = Workspace(rootUri, self._endpoint)
-        self.workspaces[rootUri] = self.workspace
         self.config = config.Config(rootUri, initializationOptions or {},
                                     processId, _kwargs.get('capabilities', {}))
+        self.workspace = Workspace(rootUri, self._endpoint, self.config)
+        self.workspaces[rootUri] = self.workspace
         self._dispatchers = self._hook('pyls_dispatchers')
         self._hook('pyls_initialize')
 
-        if self._check_parent_process and processId is not None:
+        if self._check_parent_process and processId is not None and self.watching_thread is None:
             def watch_parent_process(pid):
-                # exist when the given pid is not alive
+                # exit when the given pid is not alive
                 if not _utils.is_process_alive(pid):
-                    log.info("parent process %s is not alive", pid)
+                    log.info("parent process %s is not alive, exiting!", pid)
                     self.m_exit()
-                log.debug("parent process %s is still alive", pid)
-                threading.Timer(PARENT_PROCESS_WATCH_INTERVAL, watch_parent_process, args=[pid]).start()
+                else:
+                    threading.Timer(PARENT_PROCESS_WATCH_INTERVAL, watch_parent_process, args=[pid]).start()
 
-            watching_thread = threading.Thread(target=watch_parent_process, args=(processId,))
-            watching_thread.daemon = True
-            watching_thread.start()
-
+            self.watching_thread = threading.Thread(target=watch_parent_process, args=(processId,))
+            self.watching_thread.daemon = True
+            self.watching_thread.start()
         # Get our capabilities
         return {'capabilities': self.capabilities()}
 
@@ -260,6 +285,9 @@ class PythonLanguageServer(MethodDispatcher):
     def signature_help(self, doc_uri, position):
         return self._hook('pyls_signature_help', doc_uri, position=position)
 
+    def folding(self, doc_uri):
+        return self._hook('pyls_folding_range', doc_uri)
+
     def m_text_document__did_close(self, textDocument=None, **_kwargs):
         workspace = self._match_uri_to_workspace(textDocument['uri'])
         workspace.rm_document(textDocument['uri'])
@@ -311,6 +339,9 @@ class PythonLanguageServer(MethodDispatcher):
     def m_text_document__rename(self, textDocument=None, position=None, newName=None, **_kwargs):
         return self.rename(textDocument['uri'], position, newName)
 
+    def m_text_document__folding_range(self, textDocument=None, **_kwargs):
+        return self.folding(textDocument['uri'])
+
     def m_text_document__range_formatting(self, textDocument=None, range=None, _options=None, **_kwargs):
         # Again, we'll ignore formatting options for now.
         return self.format_range(textDocument['uri'], range)
@@ -326,6 +357,7 @@ class PythonLanguageServer(MethodDispatcher):
         self.config.update((settings or {}).get('pyls', {}))
         for workspace_uri in self.workspaces:
             workspace = self.workspaces[workspace_uri]
+            workspace.update_config(self.config)
             for doc_uri in workspace.documents:
                 self.lint(doc_uri, is_saved=False)
 
@@ -336,7 +368,7 @@ class PythonLanguageServer(MethodDispatcher):
 
         for added_info in added:
             added_uri = added_info['uri']
-            self.workspaces[added_uri] = Workspace(added_uri, self._endpoint)
+            self.workspaces[added_uri] = Workspace(added_uri, self._endpoint, self.config)
 
         # Migrate documents that are on the root workspace and have a better
         # match now

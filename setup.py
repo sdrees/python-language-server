@@ -33,12 +33,12 @@ setup(
     # https://packaging.python.org/en/latest/requirements.html
     install_requires=[
         'configparser; python_version<"3.0"',
-        'future>=0.14.0',
-        'futures; python_version<"3.2"',
+        'future>=0.14.0; python_version<"3"',
         'backports.functools_lru_cache; python_version<"3.2"',
-        'jedi>=0.13.2,<0.15,!=0.14.0',
-        'python-jsonrpc-server>=0.1.0',
-        'pluggy'
+        'jedi>=0.14.1,<0.16',
+        'python-jsonrpc-server>=0.3.2',
+        'pluggy',
+        'ujson<=1.35; platform_system!="Windows"'
     ],
 
     # List additional groups of dependencies here (e.g. development
@@ -48,6 +48,7 @@ setup(
     extras_require={
         'all': [
             'autopep8',
+            'flake8',
             'mccabe',
             'pycodestyle',
             'pydocstyle>=2.0.0',
@@ -57,6 +58,7 @@ setup(
             'yapf',
         ],
         'autopep8': ['autopep8'],
+        'flake8': ['flake8'],
         'mccabe': ['mccabe'],
         'pycodestyle': ['pycodestyle'],
         'pydocstyle': ['pydocstyle>=2.0.0'],
@@ -64,7 +66,9 @@ setup(
         'pylint': ['pylint'],
         'rope': ['rope>0.10.5'],
         'yapf': ['yapf'],
-        'test': ['versioneer', 'pylint', 'pytest', 'mock', 'pytest-cov', 'coverage'],
+        'test': ['versioneer', 'pylint', 'pytest', 'mock', 'pytest-cov',
+                 'coverage', 'numpy', 'pandas', 'matplotlib',
+                 'pyqt5;python_version>="3"'],
     },
 
     # To provide executable scripts, use entry points in preference to the
@@ -76,6 +80,8 @@ setup(
         ],
         'pyls': [
             'autopep8 = pyls.plugins.autopep8_format',
+            'folding = pyls.plugins.folding',
+            'flake8 = pyls.plugins.flake8_lint',
             'jedi_completion = pyls.plugins.jedi_completion',
             'jedi_definition = pyls.plugins.definition',
             'jedi_hover = pyls.plugins.hover',
@@ -91,7 +97,7 @@ setup(
             'pylint = pyls.plugins.pylint_lint',
             'rope_completion = pyls.plugins.rope_completion',
             'rope_rename = pyls.plugins.rope_rename',
-            'yapf = pyls.plugins.yapf_format',
+            'yapf = pyls.plugins.yapf_format'
         ]
     },
 )
