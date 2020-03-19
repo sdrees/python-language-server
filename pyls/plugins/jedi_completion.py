@@ -1,5 +1,6 @@
 # Copyright 2017 Palantir Technologies, Inc.
 import logging
+import os.path as osp
 import parso
 from pyls import hookimpl, lsp, _utils
 
@@ -22,6 +23,7 @@ _TYPE_MAP = {
     'builtinfunction': lsp.CompletionItemKind.Function,
     'module': lsp.CompletionItemKind.Module,
     'file': lsp.CompletionItemKind.File,
+    'path': lsp.CompletionItemKind.Text,
     'xrange': lsp.CompletionItemKind.Class,
     'slice': lsp.CompletionItemKind.Class,
     'traceback': lsp.CompletionItemKind.Class,
@@ -130,17 +132,24 @@ def _format_completion(d, include_params=True):
         'insertText': d.name
     }
 
+    if d.type == 'path':
+        path = osp.normpath(d.name)
+        path = path.replace('\\', '\\\\')
+        path = path.replace('/', '\\/')
+        completion['insertText'] = path
+
     if (include_params and hasattr(d, 'params') and d.params and
             not is_exception_class(d.name)):
-        positional_args = [param for param in d.params if '=' not in param.description]
+        positional_args = [param for param in d.params
+                           if '=' not in param.description and
+                           param.name not in {'/', '*'}]
 
         if len(positional_args) > 1:
             # For completions with params, we can generate a snippet instead
             completion['insertTextFormat'] = lsp.InsertTextFormat.Snippet
             snippet = d.name + '('
             for i, param in enumerate(positional_args):
-                name = param.name if param.name != '/' else '\\/'
-                snippet += '${%s:%s}' % (i + 1, name)
+                snippet += '${%s:%s}' % (i + 1, param.name)
                 if i < len(positional_args) - 1:
                     snippet += ', '
             snippet += ')$0'
