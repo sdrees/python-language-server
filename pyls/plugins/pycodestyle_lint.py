@@ -1,22 +1,27 @@
 # Copyright 2017 Palantir Technologies, Inc.
 import logging
 import pycodestyle
-from autopep8 import continued_indentation as autopep8_c_i
 from pyls import hookimpl, lsp
 
-# Check if autopep8's continued_indentation implementation
-# is overriding pycodestyle's and if so, re-register
-# the check using pycodestyle's implementation as expected
-if autopep8_c_i in pycodestyle._checks['logical_line']:
-    del pycodestyle._checks['logical_line'][autopep8_c_i]
-    pycodestyle.register_check(pycodestyle.continued_indentation)
+try:
+    from autopep8 import continued_indentation as autopep8_c_i
+except ImportError:
+    pass
+else:
+    # Check if autopep8's continued_indentation implementation
+    # is overriding pycodestyle's and if so, re-register
+    # the check using pycodestyle's implementation as expected
+    if autopep8_c_i in pycodestyle._checks['logical_line']:
+        del pycodestyle._checks['logical_line'][autopep8_c_i]
+        pycodestyle.register_check(pycodestyle.continued_indentation)
 
 log = logging.getLogger(__name__)
 
 
 @hookimpl
-def pyls_lint(config, document):
-    settings = config.plugin_settings('pycodestyle')
+def pyls_lint(workspace, document):
+    config = workspace._config
+    settings = config.plugin_settings('pycodestyle', document_path=document.path)
     log.debug("Got pycodestyle settings: %s", settings)
 
     opts = {
@@ -73,5 +78,13 @@ class PyCodeStyleDiagnosticReport(pycodestyle.BaseReport):
             'message': text,
             'code': code,
             # Are style errors really ever errors?
-            'severity': lsp.DiagnosticSeverity.Warning
+            'severity': _get_severity(code)
         })
+
+
+def _get_severity(code):
+    # Are style errors ever really errors?
+    if code[0] == 'E' or code[0] == 'W':
+        return lsp.DiagnosticSeverity.Warning
+    # If no severity is specified, why wouldn't this be informational only?
+    return lsp.DiagnosticSeverity.Information
